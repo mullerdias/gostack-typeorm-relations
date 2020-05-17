@@ -2,6 +2,8 @@ import { inject, injectable } from 'tsyringe';
 
 import AppError from '@shared/errors/AppError';
 
+import IUpdateProductsQuantityDTO from '@modules/products/dtos/IUpdateProductsQuantityDTO';
+
 import IProductsRepository from '@modules/products/repositories/IProductsRepository';
 import ICustomersRepository from '@modules/customers/repositories/ICustomersRepository';
 import Order from '../infra/typeorm/entities/Order';
@@ -20,13 +22,69 @@ interface IRequest {
 @injectable()
 class CreateProductService {
   constructor(
+    @inject('OrdersRepository')
     private ordersRepository: IOrdersRepository,
+
+    @inject('ProductsRepository')
     private productsRepository: IProductsRepository,
+
+    @inject('CustomersRepository')
     private customersRepository: ICustomersRepository,
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
-    // TODO
+    const customer = await this.customersRepository.findById(customer_id);
+
+    if (!customer) {
+      throw new AppError('Cliente não existe.');
+    }
+
+    const findProducts = await this.productsRepository.findAllById(products);
+    const updateQuantity: IUpdateProductsQuantityDTO[] = [];
+
+    const newProducts = products.reduce(
+      (result, { id: product_id, quantity }) => {
+        const product = findProducts.find(p => p.id === product_id);
+
+        if (!product) {
+          throw new AppError('Um ou mais dos produtos enviados não existe.');
+        }
+
+        if (quantity > product.quantity) {
+          throw new AppError(
+            'Um ou mais dos produtos enviados não possui a quantidade necessária.',
+          );
+        }
+
+        updateQuantity.push({
+          id: product.id,
+          quantity: product.quantity - quantity,
+        });
+
+        return [
+          ...result,
+          {
+            product_id,
+            price: product.price,
+            quantity,
+          },
+        ];
+      },
+      [] as {
+        product_id: string;
+        price: number;
+        quantity: number;
+      }[],
+    );
+
+    const orders = await this.ordersRepository.create({
+      customer,
+      products: newProducts,
+    });
+
+    await this.productsRepository.updateQuantity(updateQuantity);
+
+    return orders;
   }
 }
 
